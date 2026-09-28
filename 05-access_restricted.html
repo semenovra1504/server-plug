@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Серверный шлюз — ограниченный доступ</title>
+
+    <style>
+      :root {
+        --page-bg: #f7f8fa;
+        --surface: #ffffff;
+        --border: #e4e7eb;
+        --border-light: #edf0f2;
+
+        --text: #202b33;
+        --text-secondary: #667580;
+        --text-muted: #98a2aa;
+
+        --success: #2f9e61;
+        --success-bg: #edf8f2;
+
+        --radius: 12px;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: var(--page-bg);
+        color: var(--text);
+        font-family:
+          Inter,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          Helvetica,
+          Arial,
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .page {
+        min-height: 100%;
+        display: grid;
+        place-items: center;
+        padding: 28px;
+      }
+
+      .access-panel {
+        width: min(100%, 480px);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        box-shadow: 0 10px 35px rgba(24, 39, 52, 0.04);
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 22px 26px;
+        border-bottom: 1px solid var(--border-light);
+      }
+
+      .server-icon {
+        flex: 0 0 auto;
+        width: 42px;
+        height: 42px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        background: #f8fafb;
+      }
+
+      .server-icon svg {
+        width: 23px;
+        height: 23px;
+        fill: none;
+        stroke: #596873;
+        stroke-width: 1.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .header-text {
+        min-width: 0;
+      }
+
+      .header-label {
+        margin: 0 0 3px;
+        color: var(--text-muted);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .header-title {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .panel-content {
+        padding: 30px 26px 26px;
+      }
+
+      .panel-content h1 {
+        margin: 0 0 12px;
+        font-size: 22px;
+        line-height: 1.3;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+
+      .description {
+        margin: 0;
+        color: var(--text-secondary);
+        font-size: 14px;
+        line-height: 1.65;
+      }
+
+      .notice {
+        margin-top: 24px;
+        padding: 14px 16px;
+        background: #f8fafb;
+        border: 1px solid var(--border-light);
+        border-radius: 8px;
+        color: #65737d;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .status {
+        margin-top: 26px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding-top: 20px;
+        border-top: 1px solid var(--border-light);
+      }
+
+      .status-title {
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+
+      .status-value {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 5px 9px;
+        border-radius: 20px;
+        background: var(--success-bg);
+        color: #287c4e;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .status-indicator {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--success);
+        box-shadow: 0 0 0 3px rgba(47, 158, 97, 0.1);
+      }
+
+      .panel-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding: 15px 26px;
+        background: #fafbfc;
+        border-top: 1px solid var(--border-light);
+        color: var(--text-muted);
+        font-size: 11px;
+      }
+
+      .node {
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        color: #6b7882;
+      }
+
+      @media (max-width: 520px) {
+        .page {
+          padding: 16px;
+        }
+
+        .panel-header,
+        .panel-content,
+        .panel-footer {
+          padding-left: 20px;
+          padding-right: 20px;
+        }
+
+        .panel-content h1 {
+          font-size: 20px;
+        }
+
+        .status {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 10px;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <main class="page">
+      <section class="access-panel">
+        <header class="panel-header">
+          <div class="server-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <rect x="3" y="4" width="18" height="6" rx="1.5" />
+              <rect x="3" y="14" width="18" height="6" rx="1.5" />
+              <path d="M7 7h.01" />
+              <path d="M7 17h.01" />
+              <path d="M10 7h7" />
+              <path d="M10 17h7" />
+            </svg>
+          </div>
+
+          <div class="header-text">
+            <div class="header-label">Infrastructure Gateway</div>
+            <div class="header-title">Серверный узел</div>
+          </div>
+        </header>
+
+        <div class="panel-content">
+          <h1>Доступ ограничен</h1>
+
+          <p class="description">
+            Требуется авторизация. Данный сервер предназначен исключительно для
+            технического персонала.
+          </p>
+
+          <div class="notice">
+            Если вы открыли эту страницу случайно - дальнейшие действия не
+            требуются. Вы можете безопасно закрыть страницу.
+          </div>
+
+          <div class="status">
+            <span class="status-title">Состояние инфраструктуры</span>
+
+            <span class="status-value">
+              <span class="status-indicator"></span>
+              Работает штатно
+            </span>
+          </div>
+        </div>
+
+        <footer class="panel-footer">
+          <span class="node">edge-gw / node</span>
+          <span>© 2026</span>
+        </footer>
+      </section>
+    </main>
+  </body>
+</html>
