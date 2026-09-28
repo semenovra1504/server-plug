@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Репозиторий, где лежат setup.sh и HTML-заглушки.
 BASE_URL="https://raw.githubusercontent.com/semenovra1504/server-plug/main"
 
 TEMPLATES=(
@@ -20,24 +19,12 @@ error() {
   exit 1
 }
 
-# При запуске через:
-# curl -fsSL .../setup.sh | sudo bash
-# stdin занят самим скриптом, поэтому интерактивные ответы читаем из /dev/tty.
-ask() {
-  local prompt="$1"
-  local value
-
-  if [[ ! -r /dev/tty ]]; then
-    error "Нет интерактивного терминала. Запусти скрипт из обычного терминала."
-  fi
-
-  printf "%s" "$prompt" > /dev/tty
-  IFS= read -r value < /dev/tty
-  printf "%s" "$value"
-}
-
 if [[ "${EUID}" -ne 0 ]]; then
   error "Скрипт нужно запускать от root. Используй: curl -fsSL ${BASE_URL}/setup.sh | sudo bash"
+fi
+
+if [[ ! -r /dev/tty ]]; then
+  error "Нет доступа к /dev/tty. Запусти скрипт из обычного интерактивного терминала."
 fi
 
 # -----------------------------------------------------------------------------
@@ -47,21 +34,27 @@ fi
 DOMAIN="${1:-}"
 
 if [[ -z "$DOMAIN" ]]; then
-  DOMAIN="$(ask "Укажи домен (например ads.zenvoras.net): ")"
+  printf 'Укажи домен (например ads.zenvoras.net): ' > /dev/tty
+  IFS= read -r DOMAIN < /dev/tty
 fi
 
-# Убираем пробелы по краям и приводим домен к нижнему регистру.
-DOMAIN="$(printf '%s' "$DOMAIN" | xargs | tr '[:upper:]' '[:lower:]')"
+# Убираем пробелы/переводы строк по краям без запуска внешних команд.
+DOMAIN="${DOMAIN#"${DOMAIN%%[![:space:]]*}"}"
+DOMAIN="${DOMAIN%"${DOMAIN##*[![:space:]]}"}"
+
+# Нижний регистр средствами bash.
+DOMAIN="${DOMAIN,,}"
 
 [[ -n "$DOMAIN" ]] || error "Домен не указан."
 
-# Простая безопасная проверка домена, чтобы его нельзя было использовать
-# для подстановки путей или shell-команд.
+# Проверяем только безопасный формат домена.
 if [[ "$DOMAIN" == *".."* ]] || \
    [[ ! "$DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || \
    [[ "$DOMAIN" != *.* ]]; then
   error "Некорректный домен: $DOMAIN"
 fi
+
+printf '\nДомен принят: %s\n' "$DOMAIN" > /dev/tty
 
 # -----------------------------------------------------------------------------
 # 2. Выбор заглушки
@@ -76,8 +69,13 @@ if [[ -z "$CHOICE" ]]; then
     printf '  %d) %s\n' "$((i + 1))" "${TEMPLATES[$i]}" > /dev/tty
   done
 
-  CHOICE="$(ask $'\nВведи номер [1-4]: ')"
+  printf '\nВведи номер [1-4]: ' > /dev/tty
+  IFS= read -r CHOICE < /dev/tty
 fi
+
+# На всякий случай убираем пробелы по краям.
+CHOICE="${CHOICE#"${CHOICE%%[![:space:]]*}"}"
+CHOICE="${CHOICE%"${CHOICE##*[![:space:]]}"}"
 
 case "$CHOICE" in
   1) TEMPLATE="${TEMPLATES[0]}" ;;
@@ -104,46 +102,76 @@ printf 'Web root:  %s\n' "$WEB_ROOT"
 printf 'SSL:       %s\n' "$CERT_DIR"
 
 # -----------------------------------------------------------------------------
-# 3. Проверяем SSL до изменения nginx-конфига
+# 3. Проверяем SSL
 # -----------------------------------------------------------------------------
+
+log "Проверяю SSL-сертификаты..."
 
 [[ -f "$FULLCHAIN" ]] || error "Не найден SSL-сертификат: $FULLCHAIN"
 [[ -f "$PRIVKEY" ]] || error "Не найден SSL-ключ: $PRIVKEY"
 
 # -----------------------------------------------------------------------------
-# 4. Устанавливаем nginx/curl, если чего-то нет
+# 4. Устанавливаем nginx/curl при необходимости
 # -----------------------------------------------------------------------------
 
 if ! command -v nginx >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
   log "Устанавливаю nginx и curl..."
+
   export DEBIAN_FRONTEND=noninteractive
+
   apt-get update
   apt-get install -y nginx curl
 else
   log "nginx и curl уже установлены."
 fi
 
+log "Запускаю nginx..."
 systemctl enable --now nginx
 
 log "Версия nginx:"
 nginx -v
 
 # -----------------------------------------------------------------------------
-# 5. Создаём папку сайта и скачиваем выбранную заглушку
+# 5. Создаём папку сайта
 # -----------------------------------------------------------------------------
 
 log "Создаю каталог сайта..."
 install -d -m 755 "$WEB_ROOT"
 
+# -----------------------------------------------------------------------------
+# 6. Скачиваем выбранную заглушку
+# -----------------------------------------------------------------------------
+
 log "Скачиваю ${TEMPLATE}..."
+
 TMP_HTML="${WEB_ROOT}/.index.html.tmp"
 
-curl -fsSL "$TEMPLATE_URL" -o "$TMP_HTML"
+# Удаляем временный файл при аварийном завершении.
+cleanup() {
+  rm -f "$TMP_HTML"
+}
+trap cleanup EXIT
+
+curl \
+  --fail \
+  --silent \
+  --show-error \
+  --location \
+  --connect-timeout 15 \
+  --max-time 60 \
+  "$TEMPLATE_URL" \
+  -o "$TMP_HTML"
+
+[[ -s "$TMP_HTML" ]] || error "Скачанный HTML-файл пуст."
+
 chmod 644 "$TMP_HTML"
 mv -f "$TMP_HTML" "${WEB_ROOT}/index.html"
 
+# После успешного mv временного файла уже нет.
+trap - EXIT
+
 # -----------------------------------------------------------------------------
-# 6. Создаём nginx-конфиг
+# 7. Создаём nginx-конфиг
 # -----------------------------------------------------------------------------
 
 log "Создаю nginx-конфиг..."
@@ -177,24 +205,28 @@ server {
 EOF
 
 # -----------------------------------------------------------------------------
-# 7. Активируем сайт
+# 8. Активируем сайт
 # -----------------------------------------------------------------------------
 
 log "Активирую сайт..."
 ln -sfn "$NGINX_AVAILABLE" "$NGINX_ENABLED"
 
 # -----------------------------------------------------------------------------
-# 8. Проверяем конфигурацию и применяем её
+# 9. Проверяем конфигурацию
 # -----------------------------------------------------------------------------
 
 log "Проверяю конфигурацию nginx..."
 nginx -t
 
+# -----------------------------------------------------------------------------
+# 10. Применяем конфигурацию
+# -----------------------------------------------------------------------------
+
 log "Перезагружаю nginx..."
 systemctl reload nginx
 
 printf '\n\033[1;32mГотово.\033[0m\n'
-printf 'Сайт: https://%s\n' "$DOMAIN"
-printf 'Заглушка: %s\n' "$TEMPLATE"
-printf 'HTML: %s/index.html\n' "$WEB_ROOT"
-printf 'Nginx: %s\n\n' "$NGINX_AVAILABLE"
+printf 'Сайт:      https://%s\n' "$DOMAIN"
+printf 'Заглушка:  %s\n' "$TEMPLATE"
+printf 'HTML:      %s/index.html\n' "$WEB_ROOT"
+printf 'Nginx:     %s\n\n' "$NGINX_AVAILABLE"
