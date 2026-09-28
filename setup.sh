@@ -27,10 +27,6 @@ if [[ ! -r /dev/tty ]]; then
   error "Нет доступа к /dev/tty. Запусти скрипт из обычного интерактивного терминала."
 fi
 
-# -----------------------------------------------------------------------------
-# 1. Домен
-# -----------------------------------------------------------------------------
-
 DOMAIN="${1:-}"
 
 if [[ -z "$DOMAIN" ]]; then
@@ -38,16 +34,12 @@ if [[ -z "$DOMAIN" ]]; then
   IFS= read -r DOMAIN < /dev/tty
 fi
 
-# Убираем пробелы/переводы строк по краям без запуска внешних команд.
 DOMAIN="${DOMAIN#"${DOMAIN%%[![:space:]]*}"}"
 DOMAIN="${DOMAIN%"${DOMAIN##*[![:space:]]}"}"
-
-# Нижний регистр средствами bash.
 DOMAIN="${DOMAIN,,}"
 
 [[ -n "$DOMAIN" ]] || error "Домен не указан."
 
-# Проверяем только безопасный формат домена.
 if [[ "$DOMAIN" == *".."* ]] || \
    [[ ! "$DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || \
    [[ "$DOMAIN" != *.* ]]; then
@@ -55,10 +47,6 @@ if [[ "$DOMAIN" == *".."* ]] || \
 fi
 
 printf '\nДомен принят: %s\n' "$DOMAIN" > /dev/tty
-
-# -----------------------------------------------------------------------------
-# 2. Выбор заглушки
-# -----------------------------------------------------------------------------
 
 CHOICE="${2:-}"
 
@@ -73,7 +61,6 @@ if [[ -z "$CHOICE" ]]; then
   IFS= read -r CHOICE < /dev/tty
 fi
 
-# На всякий случай убираем пробелы по краям.
 CHOICE="${CHOICE#"${CHOICE%%[![:space:]]*}"}"
 CHOICE="${CHOICE%"${CHOICE##*[![:space:]]}"}"
 
@@ -88,12 +75,28 @@ esac
 WEB_ROOT="/var/www/${DOMAIN}"
 NGINX_AVAILABLE="/etc/nginx/sites-available/${DOMAIN}"
 NGINX_ENABLED="/etc/nginx/sites-enabled/${DOMAIN}"
+TEMPLATE_URL="${BASE_URL}/${TEMPLATE}"
 
-CERT_DIR="/root/cert/${DOMAIN}"
+CERT_DIR_PRIMARY="/root/cert/${DOMAIN}"
+CERT_DIR_LETSENCRYPT="/etc/letsencrypt/live/${DOMAIN}"
+
+if [[ -f "${CERT_DIR_PRIMARY}/fullchain.pem" && -f "${CERT_DIR_PRIMARY}/privkey.pem" ]]; then
+  CERT_DIR="$CERT_DIR_PRIMARY"
+elif [[ -f "${CERT_DIR_LETSENCRYPT}/fullchain.pem" && -f "${CERT_DIR_LETSENCRYPT}/privkey.pem" ]]; then
+  CERT_DIR="$CERT_DIR_LETSENCRYPT"
+else
+  error "SSL-сертификат для ${DOMAIN} не найден.
+
+Проверены пути:
+  ${CERT_DIR_PRIMARY}/fullchain.pem
+  ${CERT_DIR_PRIMARY}/privkey.pem
+
+  ${CERT_DIR_LETSENCRYPT}/fullchain.pem
+  ${CERT_DIR_LETSENCRYPT}/privkey.pem"
+fi
+
 FULLCHAIN="${CERT_DIR}/fullchain.pem"
 PRIVKEY="${CERT_DIR}/privkey.pem"
-
-TEMPLATE_URL="${BASE_URL}/${TEMPLATE}"
 
 printf '\n'
 printf 'Домен:     %s\n' "$DOMAIN"
@@ -101,24 +104,11 @@ printf 'Заглушка:  %s\n' "$TEMPLATE"
 printf 'Web root:  %s\n' "$WEB_ROOT"
 printf 'SSL:       %s\n' "$CERT_DIR"
 
-# -----------------------------------------------------------------------------
-# 3. Проверяем SSL
-# -----------------------------------------------------------------------------
-
-log "Проверяю SSL-сертификаты..."
-
-[[ -f "$FULLCHAIN" ]] || error "Не найден SSL-сертификат: $FULLCHAIN"
-[[ -f "$PRIVKEY" ]] || error "Не найден SSL-ключ: $PRIVKEY"
-
-# -----------------------------------------------------------------------------
-# 4. Устанавливаем nginx/curl при необходимости
-# -----------------------------------------------------------------------------
+log "SSL-сертификат найден: ${CERT_DIR}"
 
 if ! command -v nginx >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
   log "Устанавливаю nginx и curl..."
-
   export DEBIAN_FRONTEND=noninteractive
-
   apt-get update
   apt-get install -y nginx curl
 else
@@ -131,22 +121,13 @@ systemctl enable --now nginx
 log "Версия nginx:"
 nginx -v
 
-# -----------------------------------------------------------------------------
-# 5. Создаём папку сайта
-# -----------------------------------------------------------------------------
-
 log "Создаю каталог сайта..."
 install -d -m 755 "$WEB_ROOT"
-
-# -----------------------------------------------------------------------------
-# 6. Скачиваем выбранную заглушку
-# -----------------------------------------------------------------------------
 
 log "Скачиваю ${TEMPLATE}..."
 
 TMP_HTML="${WEB_ROOT}/.index.html.tmp"
 
-# Удаляем временный файл при аварийном завершении.
 cleanup() {
   rm -f "$TMP_HTML"
 }
@@ -167,12 +148,7 @@ curl \
 chmod 644 "$TMP_HTML"
 mv -f "$TMP_HTML" "${WEB_ROOT}/index.html"
 
-# После успешного mv временного файла уже нет.
 trap - EXIT
-
-# -----------------------------------------------------------------------------
-# 7. Создаём nginx-конфиг
-# -----------------------------------------------------------------------------
 
 log "Создаю nginx-конфиг..."
 
@@ -204,23 +180,11 @@ server {
 }
 EOF
 
-# -----------------------------------------------------------------------------
-# 8. Активируем сайт
-# -----------------------------------------------------------------------------
-
 log "Активирую сайт..."
 ln -sfn "$NGINX_AVAILABLE" "$NGINX_ENABLED"
 
-# -----------------------------------------------------------------------------
-# 9. Проверяем конфигурацию
-# -----------------------------------------------------------------------------
-
 log "Проверяю конфигурацию nginx..."
 nginx -t
-
-# -----------------------------------------------------------------------------
-# 10. Применяем конфигурацию
-# -----------------------------------------------------------------------------
 
 log "Перезагружаю nginx..."
 systemctl reload nginx
@@ -229,4 +193,5 @@ printf '\n\033[1;32mГотово.\033[0m\n'
 printf 'Сайт:      https://%s\n' "$DOMAIN"
 printf 'Заглушка:  %s\n' "$TEMPLATE"
 printf 'HTML:      %s/index.html\n' "$WEB_ROOT"
+printf 'SSL:       %s\n' "$CERT_DIR"
 printf 'Nginx:     %s\n\n' "$NGINX_AVAILABLE"
